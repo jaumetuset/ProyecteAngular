@@ -1,79 +1,251 @@
-import { FilterService } from './../../services/filter.service';
-import { IArtwork } from './../../interfaces/i-artwork';
-import { Component, OnInit,Input } from '@angular/core';
+import { Component, ElementRef, Input, OnDestroy, OnInit } from '@angular/core';
+import { IArtwork } from '../../interfaces/i-artwork';
 import { ArtworkComponent } from '../artwork/artwork.component';
 import { ArtworkRowComponent } from '../artwork-row/artwork-row.component';
 import { ApiServiceService } from '../../services/api-service.service';
 import { ArtworkFilterPipe } from '../../pipes/artwork-filter.pipe';
-import { debounceTime, filter } from 'rxjs';
+import { FilterService } from '../../services/filter.service';
+import { Subscription, debounceTime, from } from 'rxjs';
 import { UsersService } from '../../services/users.service';
-
+import { CommonModule } from '@angular/common';
+import { map, switchMap, tap } from 'rxjs/operators';
+import { ActivatedRoute } from '@angular/router';
+import { PaginationComponent } from '../pagination/pagination.component';
+import { combineLatest } from 'rxjs';
 @Component({
   selector: 'app-artwork-list',
   standalone: true,
-  imports: [ArtworkComponent, ArtworkRowComponent,ArtworkFilterPipe],
+  imports: [
+    ArtworkComponent,
+    ArtworkRowComponent,
+    ArtworkFilterPipe,
+    CommonModule,
+    PaginationComponent,
+  ],
   templateUrl: './artwork-list.component.html',
-  styleUrl: './artwork-list.component.css'
+  styleUrl: './artwork-list.component.css',
 })
-export class ArtworkListComponent implements OnInit{
+export class ArtworkListComponent implements OnInit, OnDestroy {
+  public isLikeEnabled = this.usersService.getUserId() ? true : false;
+  protected isLogged = this.usersService.getUserId() ? true : false;
+  private subArt: Subscription = new Subscription();
+  private subFilter: Subscription = new Subscription();
+  private subPagination: Subscription = new Subscription();
+  currentPage!: number;
+  totalPages!: number;
+  searchFilter: string = '';
 
-  /**
-   - constuctora -> injecte el service que necesita de la clase ApiServiceService
+  constructor(
+    private artService: ApiServiceService,
+    private filterService: FilterService,
+    private usersService: UsersService,
+    private route: ActivatedRoute
+  ) {}
 
-   - injeccció de dependencies fan automaticamente la instancia del this de TypeScript
-     y es autoconstruible ( this.artService = artService )
+  ngOnDestroy(): void {
+    this.subArt.unsubscribe();
+    this.subFilter.unsubscribe();
+    this.subPagination.unsubscribe();
+  }
 
-   - component cuan siga creat li demane els cuadres al service
-
-   - cicle de vida dels components a través de funcions (51)
-
-   - conectar amb ngOnInit : conecxió de forma asyncrona
-
-   - correcte funcionament a partir del servidor
-
-   */
-
-  constructor(private artService: ApiServiceService,private filterService: FilterService, private usesService: UsersService){}
-
-  /*
-    - ngOnInit(): obté dades del servidor
-    - rebre les dades de la url
-    - subcribirse per a extreure les obres de art
-    - a : artworks
-    - el component se subscriu al service que li dona quadres , en esta funcio arreplega el array de artworks y els mostra els 12 quadres que venen de la api
-    - se li pasa un filtre que sino posa els 4 caracters no filtrará per subscriures
-  */
   ngOnInit(): void {
-    //this.quadres = this.artService.quadres;
-    console.log(this.onlyFavorites);
+    this.subFilter = this.filterService.searchFilter
+      .pipe(debounceTime(500))
+      .subscribe((filter) => {
+        this.handleSearchFilter(filter);
+        if (!this.usersService.getUserId()) {
+          this.loadArtworksWithoutLikesAndPagination(
+            this.currentPage,
+            this.searchFilter
+          );
+        } else {
+          this.loadArtworksWithLikesAndPagination(
+            this.currentPage,
+            this.searchFilter
+          );
+        }
+      });
 
-    if(this.onlyFavorites != 'favorites'){
-      this.artService.getArtWorks().pipe(
-        // demanar i marcar les favorites
+    this.subPagination = this.route.params.subscribe((page) => {
+      this.handleRouteParams(page);
+      if (!this.usersService.getUserId()) {
+        this.loadArtworksWithoutLikesAndPagination(
+          this.currentPage,
+          this.searchFilter
+        );
+      } else {
+        this.loadArtworksWithLikesAndPagination(
+          this.currentPage,
+          this.searchFilter
+        );
+      }
+    });
+
+    if (!this.usersService.getUserId()) {
+      this.loadArtworksWithoutLikesAndPagination(
+        this.currentPage,
+        this.searchFilter
+      );
+    } else {
+      this.loadArtworksWithLikesAndPagination(
+        this.currentPage,
+        this.searchFilter
+      );
+    }
+  }
+  private handleRouteParams(page: any) {
+    this.currentPage = +page['page'];
+    this.currentPage = isNaN(this.currentPage) ? 1 : this.currentPage;
+    console.log(this.currentPage);
+  }
+
+  private handleSearchFilter(searchFilter: any) {
+    this.searchFilter = searchFilter;
+  }
+  loadArtworksWithoutLikesAndPagination(currentPage: number, filter: any) {
+    this.subArt = this.artService
+      .filterArtWorksWithPagination(currentPage, filter)
+      .pipe()
+      .subscribe(({ artworks: artworkList, totalPages }) => {
+        if (this.currentPage > totalPages) {
+          this.currentPage = 1;
+          this.loadArtworksWithoutLikesAndPagination(this.currentPage, filter);
+        } else {
+          this.quadres = artworkList;
+          console.log(this.quadres);
+          this.totalPages = totalPages;
+        }
+      });
+  }
+  loadArtworksWithLikesAndPagination(currentPage: number, filter: any) {
+    let favorites: string[];
+    this.subArt = from(this.usersService.getFavoritesId())
+      .pipe(
+        tap((favoritesList: string[]) => {
+          favorites = favoritesList;
+        }),
+        switchMap(() => {
+          return this.artService.filterArtWorksWithPagination(
+            currentPage,
+            filter
+          );
+        })
       )
-        .subscribe((artworkList: IArtwork[]) => this.quadres = artworkList);
-    }
-    else {
-      // Demanar les favorites
-      this.artService.getArtWorksIds(['3752', '11294', '6010'])
-        .subscribe((artworkList: IArtwork[]) => this.quadres = artworkList);
-    }
-
-    this.artService.getArtWorks()
-    .subscribe((artworkList: IArtwork[]) => this.quadres = artworkList);
-    this.filterService.searchFilter.pipe(filter(f => f.length > 4 || f.length === 0),debounceTime(500)).subscribe(filter => this.filter = filter);
+      .subscribe(({ artworks: artworkList, totalPages }) => {
+        if (this.currentPage > totalPages) {
+          this.currentPage = 1;
+          this.loadArtworksWithLikesAndPagination(this.currentPage, filter);
+        } else {
+          this.quadres = artworkList.map((artwork: IArtwork) => {
+            if (favorites.includes(artwork.id + '')) {
+              artwork.like = true;
+            }
+            return artwork;
+          });
+          console.log(this.quadres);
+          this.totalPages = totalPages;
+        }
+      });
+  }
+  /*
+  loadArtworksWithLikes() {
+    let favorites: string[];
+    this.subArt = from(this.usersService.getFavoritesId())
+      .pipe(
+        tap((favoritesList: string[]) => {
+          favorites = favoritesList;
+        }),
+        switchMap(() => {
+          return this.artService.getArtWorks();
+        })
+      )
+      .subscribe((allArtworks: IArtwork[]) => {
+        this.quadres = allArtworks.map((artwork: IArtwork) => {
+          if (favorites.includes(artwork.id + '')) {
+            artwork.like = true;
+          }
+          return artwork;
+        });
+      });
+  }
+  loadArtworksWithoutLikes() {
+    this.subArt = this.artService
+      .getArtWorksByPage(this.currentPage)
+      .pipe()
+      .subscribe(({ artworks: artworkList, totalPages }) => {
+        this.quadres = artworkList;
+        console.log(this.quadres);
+        this.totalPages = totalPages;
+      });
   }
 
-  toggleLike($event: boolean, artwork: IArtwork){
-    console.log($event,artwork);
+  filterSearch() {
+    this.subFilter = this.filterService.searchFilter
+      .pipe(
+        debounceTime(500),
+
+        switchMap((filter) => this.artService.filterArtWorks(filter))
+      )
+      .subscribe((filteredArtworks) => {
+        this.quadres = filteredArtworks;
+      });
+  }
+
+  filterSearchWithPagination() {
+    this.subFilter = this.filterService.searchFilter
+      .pipe(
+        debounceTime(500),
+
+        switchMap((filter) =>
+          this.artService.filterArtWorksWithPagination(this.currentPage, filter)
+        )
+      )
+      .subscribe(({ artworks: artworkList, totalPages }) => {
+        this.quadres = artworkList;
+        console.log(this.quadres);
+        this.totalPages = totalPages;
+      });
+  }
+  filterSearchFavorites() {
+    //reiniciem el current page
+
+    this.subFilter = this.filterService.searchFilter
+      .pipe(
+        debounceTime(500),
+
+        switchMap((filter) => {
+          return this.artService.filterArtWorks(filter);
+        }),
+        switchMap((filteredArtworks) => {
+          return from(this.usersService.getFavoritesId()).pipe(
+            map((favorites) => ({ filteredArtworks, favorites }))
+          );
+        })
+      )
+      .subscribe(({ filteredArtworks, favorites }) => {
+        this.quadres = filteredArtworks.map((artwork: IArtwork) => {
+          if (favorites.includes(artwork.id + '')) {
+            artwork.like = true;
+          }
+          return artwork;
+        });
+      });
+  }
+  */
+
+  toggleLike($event: boolean, artwork: IArtwork) {
+    console.log($event, artwork);
     artwork.like = !artwork.like;
-    this.usesService.setFavorite(artwork.id + "")
+    console.log(artwork.like);
+    if (artwork.like) {
+      //si fa like el posem com a favorite
+      this.usersService.setFavorite(artwork.id + '');
+    } else {
+      //si no es el posem com no favorite
+      this.usersService.removeFavorite(artwork.id + '');
+    }
   }
 
-  quadres: IArtwork[]=[];
-  filter: string='';
-  @Input() onlyFavorites: string = '';
+  protected quadres: IArtwork[] = [];
+  protected filter: string = '';
 }
-
-
-

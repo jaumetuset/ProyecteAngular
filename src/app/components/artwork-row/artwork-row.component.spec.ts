@@ -11,7 +11,7 @@ describe('ArtworkRowComponent', () => {
       imports: [ArtworkRowComponent]
     })
     .compileComponents();
-
+    
     fixture = TestBed.createComponent(ArtworkRowComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
